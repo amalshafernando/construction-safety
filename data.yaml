@@ -1,0 +1,26 @@
+# YOLO Dataset Configuration
+# This file tells YOLOv8 where your data lives and what classes to detect.
+
+path: ../data          # Root path to the dataset (relative to this file)
+train: images/train    # Training images folder
+val: images/val        # Validation images folder
+test: images/test      # Test images folder (optional)
+
+# Number of classes
+nc: 6
+
+# Class names — these must match exactly what you used when annotating
+# Class index 0 = worker, 1 = hard-hat, etc.
+names:
+  0: worker            # A person on the construction site
+  1: hard-hat          # Hard hat / safety helmet being worn correctly
+  2: safety-vest       # High-visibility vest being worn correctly
+  3: no-hard-hat       # Worker without a hard hat (VIOLATION)
+  4: no-safety-vest    # Worker without a safety vest (VIOLATION)
+  5: safety-harness    # Fall-protection harness (bonus class)
+
+# Notes:
+# - Violation classes (3, 4) can be detected directly OR inferred in rules.py
+#   by checking which workers have no overlapping PPE bounding box.
+# - You can simplify to 4 classes if annotation time is limited:
+#   worker, hard-hat, safety-vest, no-hard-hat

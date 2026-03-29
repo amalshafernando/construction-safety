@@ -1,0 +1,26 @@
+# Model weights (too large for git — store separately or use Git LFS)
+models/weights/*.pt
+runs/
+
+# Dataset images (usually too large for git)
+data/images/
+data/labels/
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+.env
+venv/
+.venv/
+
+# Output images and reports
+outputs/annotated/
+outputs/reports/
+
+# Jupyter notebook checkpoints
+.ipynb_checkpoints/
+
+# OS files
+.DS_Store
+Thumbs.db
