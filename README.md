@@ -203,7 +203,7 @@ construction-safety/
 ### Installation
 
 ```bash
-git clone https://github.com/YOUR_USERNAME/construction-safety.git
+git clone https://github.com/amalshafernando/construction-safety.git
 cd construction-safety
 
 python -m venv venv
@@ -230,6 +230,9 @@ print(torch.cuda.get_device_name(0))   # e.g. "Tesla T4"
 **Stage 1 — Roboflow Universe base dataset**
 
 Downloaded `roboflow-100/construction-site-safety` — ~3,000 pre-annotated images across indoor and outdoor construction environments.
+
+Then I extended it by adding more data.
+refer this notebook[https://drive.google.com/file/d/17cJKLG86JJp9a8uP_DM28YKbjlWdWwi3/view?usp=sharing]
 
 **Stage 2 — Custom image collection**
 
@@ -640,5 +643,4 @@ See `requirements.txt` for full pinned versions.
 
 ---
 
-*Built for the Associate Software Engineer · AI/ML assignment.*
 *Dataset extended from Roboflow Universe (Construction Site Safety, MIT license).*

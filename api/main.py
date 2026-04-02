@@ -37,7 +37,13 @@ from ultralytics import YOLO
 from dotenv import load_dotenv
 import os
 
+import webbrowser
+import threading
+
 load_dotenv()
+
+def open_browser():
+    webbrowser.open("http://localhost:8000")
 
 # Add src/ to path so we can import rules.py
 import sys
@@ -81,11 +87,7 @@ if frontend_path.exists():
 # ── Global state ───────────────────────────────────────────────────────────────
 
 class AppState:
-    model: Optional[YOLO] = None
-    camera: Optional[cv2.VideoCapture] = None
-    camera_lock = threading.Lock()
-    violation_log: deque = deque(maxlen=MAX_LOG_ENTRIES)
-    frame_count: int = 0
+# ...existing code...
     start_time: float = time.time()
 
 state = AppState()
@@ -93,9 +95,8 @@ state = AppState()
 
 # ── Model loading ──────────────────────────────────────────────────────────────
 
-@app.on_event("startup")
 async def load_model():
-    """Load YOLO model when the server starts."""
+    """Load YOLO model."""
     if not WEIGHTS_PATH.exists():
         print(f"[WARN] Weights not found at {WEIGHTS_PATH}")
         print("[WARN] API will start but /analyse and /stream will return 503.")
@@ -105,6 +106,14 @@ async def load_model():
     print(f"[INFO] Loading model from {WEIGHTS_PATH} ...")
     state.model = YOLO(str(WEIGHTS_PATH))
     print("[INFO] Model loaded. API is ready.")
+
+@app.on_event("startup")
+async def on_startup():
+    """Load model and open browser."""
+    await load_model()
+    # Open browser in a separate thread to avoid blocking
+    threading.Timer(1, open_browser).start()
+
 
 
 @app.on_event("shutdown")
