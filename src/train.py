@@ -13,21 +13,23 @@ Usage (Colab):
 from ultralytics import YOLO
 import yaml
 import os
+from dotenv import load_dotenv
+
+load_dotenv()
 
 # ── Configuration ──────────────────────────────────────────────────────────────
 
-DATA_CONFIG  = "data.yaml"          # Path to dataset config
-MODEL_BASE   = "yolov8n.pt"         # Start from YOLOv8 nano (pre-trained on COCO)
-                                    # Options: yolov8n, yolov8s, yolov8m, yolov8l
-PROJECT_DIR  = "outputs/runs"       # Where training results are saved
-RUN_NAME     = "ppe_detector_v1"    # Name for this training run
+DATA_CONFIG  = os.getenv("DATA_CONFIG", "data.yaml")
+MODEL_BASE   = os.getenv("MODEL_BASE", "yolov8n.pt")
+PROJECT_DIR  = os.getenv("PROJECT_DIR", "outputs/runs")
+RUN_NAME     = os.getenv("RUN_NAME", "ppe_detector_v1")
 
 # Training hyperparameters
-EPOCHS       = 50                   # How many times to loop through all training data
-IMAGE_SIZE   = 640                  # Input image size (YOLOv8 default)
-BATCH_SIZE   = 16                   # Images per gradient update (lower if GPU runs out of memory)
-PATIENCE     = 10                   # Stop early if no improvement after N epochs
-DEVICE       = "0"                  # "0" = first GPU, "cpu" = CPU only
+EPOCHS       = int(os.getenv("EPOCHS", 50))
+IMAGE_SIZE   = int(os.getenv("IMAGE_SIZE", 640))
+BATCH_SIZE   = int(os.getenv("BATCH_SIZE", 16))
+PATIENCE     = int(os.getenv("PATIENCE", 10))
+DEVICE       = os.getenv("DEVICE", "0")
 
 # ── Training ───────────────────────────────────────────────────────────────────
 

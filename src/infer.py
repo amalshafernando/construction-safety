@@ -1,161 +1,328 @@
 """
 infer.py
 --------
-Runs the trained PPE detection model on images or a folder of images.
-Draws bounding boxes, applies safety rules, and saves violation reports.
+Runs the trained PPE detection model on images, folders, or video.
+Draws colour-coded bounding boxes, applies safety rules, and saves
+both annotated images and structured violation reports (text + JSON).
 
 Usage:
     python src/infer.py --source path/to/image.jpg
     python src/infer.py --source data/images/test/
     python src/infer.py --source path/to/video.mp4
+    python src/infer.py --source data/images/test/ --weights models/weights/best.pt
 """
 
 import argparse
 import os
 import cv2
+import json
 import datetime
 from pathlib import Path
 from ultralytics import YOLO
+from dotenv import load_dotenv
 
-# Import our custom safety rule engine
-from rules import Detection, check_safety
+load_dotenv()
+
+from rules import (
+    Detection, ViolationReport, check_safety,
+    DIRECT_VIOLATION_CLASSES, WORKER,
+    SEVERITY_SAFE, SEVERITY_UNSAFE,
+)
 
 # ── Configuration ──────────────────────────────────────────────────────────────
 
-DEFAULT_WEIGHTS   = "models/weights/best.pt"
-OUTPUT_IMAGE_DIR  = "outputs/annotated"
-OUTPUT_REPORT_DIR = "outputs/reports"
-CONFIDENCE        = 0.40          # Minimum confidence to show a detection
+DEFAULT_WEIGHTS   = os.getenv("WEIGHTS_PATH", "models/weights/best.pt")
+OUTPUT_IMAGE_DIR  = os.getenv("OUTPUT_IMAGE_DIR", "outputs/annotated")
+OUTPUT_REPORT_DIR = os.getenv("OUTPUT_REPORT_DIR", "outputs/reports")
+CONFIDENCE        = float(os.getenv("CONFIDENCE", 0.40))
 
-# Colours for bounding boxes: BGR format (OpenCV uses BGR, not RGB)
-COLOUR_SAFE      = (34, 197, 94)    # Green  — compliant worker or PPE
-COLOUR_VIOLATION = (59, 130, 246)   # Blue   — violation highlight
-COLOUR_RED       = (60, 60, 220)    # Red    — violation label background
-COLOUR_WHITE     = (255, 255, 255)
-COLOUR_BLACK     = (0, 0, 0)
+# BGR colours (OpenCV uses BGR, not RGB)
+C_GREEN   = (56, 197, 34)    # compliant worker / PPE item
+C_RED     = (45,  45, 220)   # violation box
+C_ORANGE  = (30, 140, 255)   # violation label accent
+C_BANNER_SAFE   = (34, 120, 34)
+C_BANNER_UNSAFE = (30,  30, 180)
+C_WHITE   = (255, 255, 255)
+C_BLACK   = (0,   0,   0)
 
 
 # ── Drawing helpers ─────────────────────────────────────────────────────────────
 
-def draw_box(image, box, label, colour):
-    """Draws a bounding box with a label on the image."""
+def draw_box(image, box, label: str, colour, thickness: int = 2):
+    """Draws a rounded-corner bounding box with a filled label badge."""
     x1, y1, x2, y2 = map(int, box)
-    cv2.rectangle(image, (x1, y1), (x2, y2), colour, thickness=2)
+    cv2.rectangle(image, (x1, y1), (x2, y2), colour, thickness)
 
-    # Label background pill
-    (text_w, text_h), _ = cv2.getTextSize(label, cv2.FONT_HERSHEY_SIMPLEX, 0.55, 1)
-    cv2.rectangle(image, (x1, y1 - text_h - 8), (x1 + text_w + 6, y1), colour, -1)
-    cv2.putText(image, label, (x1 + 3, y1 - 4),
-                cv2.FONT_HERSHEY_SIMPLEX, 0.55, COLOUR_WHITE, 1, cv2.LINE_AA)
+    font       = cv2.FONT_HERSHEY_SIMPLEX
+    font_scale = 0.50
+    font_thick = 1
+    (tw, th), _ = cv2.getTextSize(label, font, font_scale, font_thick)
 
-
-def draw_status_banner(image, is_safe: bool, violation_count: int):
-    """Draws a SAFE / UNSAFE banner at the top of the image."""
-    h, w = image.shape[:2]
-    banner_h = 38
-    colour  = (34, 139, 34) if is_safe else (0, 0, 200)
-    label   = "SAFE" if is_safe else f"UNSAFE  —  {violation_count} violation(s) detected"
-
-    cv2.rectangle(image, (0, 0), (w, banner_h), colour, -1)
-    cv2.putText(image, label, (12, 26),
-                cv2.FONT_HERSHEY_SIMPLEX, 0.75, COLOUR_WHITE, 2, cv2.LINE_AA)
+    # Badge sits above the box; clamp to top of image
+    badge_y1 = max(0, y1 - th - 8)
+    badge_y2 = y1
+    cv2.rectangle(image, (x1, badge_y1), (x1 + tw + 6, badge_y2), colour, -1)
+    cv2.putText(image, label, (x1 + 3, badge_y2 - 3),
+                font, font_scale, C_WHITE, font_thick, cv2.LINE_AA)
 
 
-# ── Main inference function ─────────────────────────────────────────────────────
+def draw_worker_box(image, ws, worker_colour):
+    """
+    Draws the worker bounding box with a compliance score or violation badge.
+    Green = compliant, Red = violation. Shows compliance score if safe.
+    """
+    x1, y1, x2, y2 = map(int, ws.box)
+    cv2.rectangle(image, (x1, y1), (x2, y2), worker_colour, 2)
 
-def run_inference(source: str, weights: str = DEFAULT_WEIGHTS):
-    """Runs inference on a single image, a folder, or a video."""
-
-    print(f"[INFO] Loading model from: {weights}")
-    model = YOLO(weights)
-
-    # Collect all image paths
-    source_path = Path(source)
-    if source_path.is_dir():
-        image_paths = list(source_path.glob("*.jpg")) + \
-                      list(source_path.glob("*.jpeg")) + \
-                      list(source_path.glob("*.png"))
-        print(f"[INFO] Found {len(image_paths)} images in {source}")
-    elif source_path.is_file():
-        image_paths = [source_path]
+    if ws.is_compliant:
+        label = f"Worker {ws.worker_index} — OK ({ws.compliance_score:.0%})"
     else:
-        raise FileNotFoundError(f"Source not found: {source}")
+        label = f"Worker {ws.worker_index} — VIOLATION"
 
-    os.makedirs(OUTPUT_IMAGE_DIR, exist_ok=True)
-    os.makedirs(OUTPUT_REPORT_DIR, exist_ok=True)
+    (tw, th), _ = cv2.getTextSize(label, cv2.FONT_HERSHEY_SIMPLEX, 0.50, 1)
+    badge_y1 = max(0, y1 - th - 8)
+    cv2.rectangle(image, (x1, badge_y1), (x1 + tw + 6, y1), worker_colour, -1)
+    cv2.putText(image, label, (x1 + 3, y1 - 3),
+                cv2.FONT_HERSHEY_SIMPLEX, 0.50, C_WHITE, 1, cv2.LINE_AA)
 
-    all_reports = []
+    # If violation, list the specific issues inside the box
+    if not ws.is_compliant:
+        for j, v_msg in enumerate(ws.violations):
+            cv2.putText(image, f"  ! {v_msg}", (x1 + 4, y1 + 18 + j * 18),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.42, C_RED, 1, cv2.LINE_AA)
 
+
+def draw_status_banner(image, report: ViolationReport):
+    """Draws a coloured status banner at the top of the image."""
+    h, w   = image.shape[:2]
+    colour = C_BANNER_SAFE if report.is_safe else C_BANNER_UNSAFE
+
+    if report.is_safe:
+        text = f"SAFE  |  {report.worker_count} worker(s)  |  confidence {report.scene_confidence:.0%}"
+    else:
+        text = (f"UNSAFE  |  {report.violation_count} violation(s)  "
+                f"|  {report.compliant_count}/{report.worker_count} workers compliant")
+
+    cv2.rectangle(image, (0, 0), (w, 40), colour, -1)
+    cv2.putText(image, text, (10, 27),
+                cv2.FONT_HERSHEY_SIMPLEX, 0.70, C_WHITE, 2, cv2.LINE_AA)
+
+
+# ── Per-image processing ────────────────────────────────────────────────────────
+
+def process_image(image, img_name: str, model) -> ViolationReport:
+    """
+    Runs YOLO on a single image (numpy array), applies safety rules,
+    draws annotations in-place, and returns the ViolationReport.
+    """
+    results = model(image, conf=CONFIDENCE, verbose=False)[0]
+
+    # Parse raw YOLO output into Detection objects
+    detections: list[Detection] = []
+    for box in results.boxes:
+        detections.append(Detection(
+            class_name=model.names[int(box.cls[0])],
+            confidence=float(box.conf[0]),
+            box=tuple(box.xyxy[0].tolist()),
+        ))
+
+    # Apply safety rule engine
+    report = check_safety(img_name, detections)
+
+    # ── Draw PPE items (non-worker boxes) ──────────────────────────────────────
+    for det in detections:
+        if det.class_name == WORKER:
+            continue   # drawn separately below with worker status
+        is_viol = det.class_name in DIRECT_VIOLATION_CLASSES
+        colour  = C_RED if is_viol else C_GREEN
+        label   = f"{det.class_name} {det.confidence:.0%}"
+        draw_box(image, det.box, label, colour)
+
+    # ── Draw worker boxes with per-worker compliance info ──────────────────────
+    for ws in report.worker_statuses:
+        worker_colour = C_GREEN if ws.is_compliant else C_RED
+        draw_worker_box(image, ws, worker_colour)
+
+    # ── Draw status banner ─────────────────────────────────────────────────────
+    draw_status_banner(image, report)
+
+    return report
+
+
+# ── Image folder mode ───────────────────────────────────────────────────────────
+
+def run_on_images(image_paths: list, model, out_img_dir: Path) -> list[ViolationReport]:
+    reports = []
     for img_path in image_paths:
         print(f"\n[PROCESSING] {img_path.name}")
-
-        # Load image
         image = cv2.imread(str(img_path))
         if image is None:
-            print(f"  [WARN] Could not read image, skipping.")
+            print("  [WARN] Could not read image, skipping.")
             continue
 
-        # Run YOLO detection
-        results = model(image, conf=CONFIDENCE, verbose=False)[0]
-
-        # Parse detections into our Detection dataclass
-        detections = []
-        for box in results.boxes:
-            class_id   = int(box.cls[0])
-            class_name = model.names[class_id]
-            confidence = float(box.conf[0])
-            x1, y1, x2, y2 = box.xyxy[0].tolist()
-
-            detections.append(Detection(
-                class_name=class_name,
-                confidence=confidence,
-                box=(x1, y1, x2, y2),
-            ))
-
-        # Apply safety rules
-        report = check_safety(str(img_path.name), detections)
-        all_reports.append(report)
-
-        # Draw all bounding boxes on image
-        for det in detections:
-            is_violation_class = det.class_name in {"no-hard-hat", "no-safety-vest"}
-            colour = COLOUR_RED if is_violation_class else COLOUR_SAFE
-            label  = f"{det.class_name} {det.confidence:.0%}"
-            draw_box(image, det.box, label, colour)
-
-        # Draw top status banner
-        draw_status_banner(image, report.is_safe, report.violation_count)
+        report = process_image(image, img_path.name, model)
+        reports.append(report)
 
         # Save annotated image
-        out_img_path = Path(OUTPUT_IMAGE_DIR) / f"result_{img_path.name}"
-        cv2.imwrite(str(out_img_path), image)
-        print(f"  [SAVED] Annotated image → {out_img_path}")
+        out_path = out_img_dir / f"result_{img_path.name}"
+        cv2.imwrite(str(out_path), image)
+        print(f"  [SAVED]  → {out_path}")
+        print(f"  [{report.severity}]  workers:{report.worker_count}  "
+              f"violations:{report.violation_count}  "
+              f"confidence:{report.scene_confidence:.0%}")
 
-        # Print report to console
-        print(report.summary())
+    return reports
 
-    # Save combined text report
-    timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
-    report_path = Path(OUTPUT_REPORT_DIR) / f"report_{timestamp}.txt"
-    with open(report_path, "w") as f:
-        f.write(f"Construction Safety Monitor — Report\n")
-        f.write(f"Generated: {datetime.datetime.now()}\n")
-        f.write(f"Source: {source}\n\n")
-        for r in all_reports:
+
+# ── Video mode ──────────────────────────────────────────────────────────────────
+
+def run_on_video(video_path: str, model, out_img_dir: Path) -> list[ViolationReport]:
+    """
+    Processes a video file frame by frame.
+    Saves a sample of annotated frames and returns one report per sampled frame.
+    """
+    cap = cv2.VideoCapture(video_path)
+    if not cap.isOpened():
+        raise IOError(f"Cannot open video: {video_path}")
+
+    fps        = cap.get(cv2.CAP_PROP_FPS) or 25
+    total      = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+    sample_every = max(1, int(fps))   # analyse one frame per second
+    video_name = Path(video_path).stem
+
+    print(f"[VIDEO] {video_name}  |  {total} frames  |  {fps:.1f} fps")
+    print(f"[VIDEO] Sampling every {sample_every} frames (~1 per second)")
+
+    reports    = []
+    frame_idx  = 0
+    saved      = 0
+
+    while True:
+        ret, frame = cap.read()
+        if not ret:
+            break
+
+        if frame_idx % sample_every == 0:
+            frame_name = f"{video_name}_frame{frame_idx:06d}.jpg"
+            report     = process_image(frame, frame_name, model)
+            reports.append(report)
+
+            out_path = out_img_dir / f"result_{frame_name}"
+            cv2.imwrite(str(out_path), frame)
+            saved += 1
+
+            print(f"  Frame {frame_idx:6d}  [{report.severity}]  "
+                  f"workers:{report.worker_count}  violations:{report.violation_count}")
+
+        frame_idx += 1
+
+    cap.release()
+    print(f"[VIDEO] Done — {saved} frames saved.")
+    return reports
+
+
+# ── Report saving ───────────────────────────────────────────────────────────────
+
+def save_reports(reports: list[ViolationReport], source: str, out_dir: Path):
+    """Saves a plain-text summary report and a machine-readable JSON report."""
+    timestamp   = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+    safe_count  = sum(1 for r in reports if r.is_safe)
+
+    # ── Text report ───────────────────────────────────────────────────────────
+    txt_path = out_dir / f"report_{timestamp}.txt"
+    with open(txt_path, "w") as f:
+        f.write("Construction Safety Monitor — Violation Report\n")
+        f.write(f"Generated : {datetime.datetime.now()}\n")
+        f.write(f"Source    : {source}\n")
+        f.write(f"Summary   : {safe_count}/{len(reports)} images/frames fully safe\n")
+        f.write("=" * 60 + "\n\n")
+        for r in reports:
             f.write(r.summary())
             f.write("\n\n")
 
-    safe_count = sum(1 for r in all_reports if r.is_safe)
-    print(f"\n[SUMMARY] {safe_count}/{len(all_reports)} images are fully safe.")
-    print(f"[REPORT]  Saved to {report_path}")
+    # ── JSON report ───────────────────────────────────────────────────────────
+    json_path = out_dir / f"report_{timestamp}.json"
+    json_data = {
+        "generated":    datetime.datetime.now().isoformat(),
+        "source":       source,
+        "total_images": len(reports),
+        "safe_count":   safe_count,
+        "unsafe_count": len(reports) - safe_count,
+        "results": [
+            {
+                "image":            r.image_path,
+                "severity":         r.severity,
+                "scene_confidence": r.scene_confidence,
+                "worker_count":     r.worker_count,
+                "compliant_count":  r.compliant_count,
+                "violation_count":  r.violation_count,
+                "raw_violations":   r.raw_violations,
+                "workers": [
+                    {
+                        "index":          ws.worker_index,
+                        "is_compliant":   ws.is_compliant,
+                        "compliance_score": ws.compliance_score,
+                        "has_hard_hat":   ws.has_hard_hat,
+                        "has_vest":       ws.has_vest,
+                        "has_harness":    ws.has_harness,
+                        "violations":     ws.violations,
+                    }
+                    for ws in r.worker_statuses
+                ],
+            }
+            for r in reports
+        ],
+    }
+    with open(json_path, "w") as f:
+        json.dump(json_data, f, indent=2)
+
+    print(f"\n[REPORT]  Text → {txt_path}")
+    print(f"[REPORT]  JSON → {json_path}")
+    print(f"[SUMMARY] {safe_count}/{len(reports)} images/frames are fully safe.")
 
 
-# ── Entry point ─────────────────────────────────────────────────────────────────
+# ── Main entry point ────────────────────────────────────────────────────────────
+
+def run_inference(source: str, weights: str = DEFAULT_WEIGHTS):
+    print(f"[INFO] Loading model: {weights}")
+    model = YOLO(weights)
+
+    out_img_dir = Path(OUTPUT_IMAGE_DIR)
+    out_rpt_dir = Path(OUTPUT_REPORT_DIR)
+    out_img_dir.mkdir(parents=True, exist_ok=True)
+    out_rpt_dir.mkdir(parents=True, exist_ok=True)
+
+    source_path = Path(source)
+    VIDEO_EXTS  = {".mp4", ".avi", ".mov", ".mkv"}
+
+    if source_path.is_dir():
+        # Folder of images
+        image_paths = sorted(
+            p for p in source_path.iterdir()
+            if p.suffix.lower() in {".jpg", ".jpeg", ".png"}
+        )
+        print(f"[INFO] Found {len(image_paths)} images in {source}")
+        reports = run_on_images(image_paths, model, out_img_dir)
+
+    elif source_path.is_file() and source_path.suffix.lower() in VIDEO_EXTS:
+        # Video file
+        reports = run_on_video(str(source_path), model, out_img_dir)
+
+    elif source_path.is_file():
+        # Single image
+        reports = run_on_images([source_path], model, out_img_dir)
+
+    else:
+        raise FileNotFoundError(f"Source not found: {source}")
+
+    save_reports(reports, source, out_rpt_dir)
+
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Construction Safety Monitor — Inference")
-    parser.add_argument("--source",  required=True, help="Image, folder, or video path")
-    parser.add_argument("--weights", default=DEFAULT_WEIGHTS, help="Path to model weights .pt file")
+    parser.add_argument("--source",  required=True,
+                        help="Image path, folder of images, or video file (.mp4/.avi)")
+    parser.add_argument("--weights", default=DEFAULT_WEIGHTS,
+                        help="Path to trained YOLOv8 weights (.pt file)")
     args = parser.parse_args()
-
     run_inference(source=args.source, weights=args.weights)

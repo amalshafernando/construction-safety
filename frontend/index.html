@@ -1,0 +1,573 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Construction Safety Monitor</title>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    :root {
+      --bg:       #0f1117;
+      --surface:  #1a1d27;
+      --surface2: #22263a;
+      --border:   #2e3250;
+      --green:    #22c55e;
+      --red:      #ef4444;
+      --amber:    #f59e0b;
+      --blue:     #3b82f6;
+      --text:     #e2e8f0;
+      --muted:    #94a3b8;
+      --radius:   10px;
+    }
+
+    body {
+      background: var(--bg);
+      color: var(--text);
+      font-family: 'Segoe UI', system-ui, sans-serif;
+      font-size: 14px;
+      min-height: 100vh;
+    }
+
+    /* ── Header ── */
+    header {
+      display: flex;
+      align-items: center;
+      gap: 14px;
+      padding: 16px 28px;
+      background: var(--surface);
+      border-bottom: 1px solid var(--border);
+    }
+    .logo {
+      width: 36px; height: 36px;
+      background: var(--red);
+      border-radius: 8px;
+      display: grid; place-items: center;
+      font-size: 18px;
+    }
+    header h1 { font-size: 18px; font-weight: 600; }
+    header p  { font-size: 12px; color: var(--muted); margin-top: 2px; }
+    .status-pill {
+      margin-left: auto;
+      display: flex; align-items: center; gap: 8px;
+      background: var(--surface2);
+      border: 1px solid var(--border);
+      border-radius: 20px;
+      padding: 6px 14px;
+      font-size: 12px;
+    }
+    .dot {
+      width: 8px; height: 8px; border-radius: 50%;
+      background: var(--muted);
+      animation: pulse 2s infinite;
+    }
+    .dot.online { background: var(--green); }
+    @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:.4} }
+
+    /* ── Layout ── */
+    .layout {
+      display: grid;
+      grid-template-columns: 1fr 340px;
+      gap: 20px;
+      padding: 20px 28px;
+      max-width: 1400px;
+      margin: 0 auto;
+    }
+    @media (max-width: 900px) { .layout { grid-template-columns: 1fr; } }
+
+    /* ── Cards ── */
+    .card {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      overflow: hidden;
+    }
+    .card-header {
+      display: flex; align-items: center; gap: 10px;
+      padding: 14px 18px;
+      border-bottom: 1px solid var(--border);
+      font-weight: 600; font-size: 13px;
+    }
+    .card-body { padding: 18px; }
+    .icon { font-size: 16px; }
+
+    /* ── Tabs ── */
+    .tabs { display: flex; gap: 2px; padding: 12px 18px 0; }
+    .tab {
+      padding: 8px 16px;
+      border-radius: 6px 6px 0 0;
+      font-size: 12px; font-weight: 500;
+      cursor: pointer;
+      color: var(--muted);
+      border: 1px solid transparent;
+      border-bottom: none;
+      background: transparent;
+    }
+    .tab.active {
+      background: var(--surface2);
+      color: var(--text);
+      border-color: var(--border);
+    }
+    .tab-content { display: none; }
+    .tab-content.active { display: block; }
+
+    /* ── Camera feed ── */
+    .stream-wrap {
+      position: relative;
+      background: #000;
+      border-radius: 0 0 var(--radius) var(--radius);
+      overflow: hidden;
+      aspect-ratio: 16/9;
+      display: flex; align-items: center; justify-content: center;
+    }
+    #stream-img {
+      width: 100%; height: 100%;
+      object-fit: contain;
+      display: none;
+    }
+    .stream-placeholder {
+      display: flex; flex-direction: column; align-items: center;
+      gap: 12px; color: var(--muted);
+    }
+    .stream-placeholder .big { font-size: 40px; }
+
+    /* ── Upload area ── */
+    .upload-area {
+      border: 2px dashed var(--border);
+      border-radius: var(--radius);
+      padding: 40px;
+      text-align: center;
+      cursor: pointer;
+      transition: border-color .2s, background .2s;
+    }
+    .upload-area:hover { border-color: var(--blue); background: rgba(59,130,246,.05); }
+    .upload-area .big { font-size: 36px; margin-bottom: 10px; }
+    #upload-input { display: none; }
+    .result-img {
+      width: 100%; border-radius: 8px; margin-top: 16px;
+      display: none;
+    }
+
+    /* ── Stats bar ── */
+    .stats-row {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 12px;
+      margin-bottom: 20px;
+    }
+    .stat-card {
+      background: var(--surface2);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 14px 16px;
+      text-align: center;
+    }
+    .stat-value { font-size: 28px; font-weight: 700; }
+    .stat-label { font-size: 11px; color: var(--muted); margin-top: 3px; }
+    .green { color: var(--green); }
+    .red   { color: var(--red); }
+    .amber { color: var(--amber); }
+
+    /* ── Verdict badge ── */
+    .verdict {
+      display: flex; align-items: center; gap: 10px;
+      padding: 12px 16px;
+      border-radius: 8px;
+      font-weight: 600; font-size: 15px;
+      margin-bottom: 14px;
+      background: var(--surface2);
+      border: 1px solid var(--border);
+    }
+    .verdict.safe   { border-color: var(--green); color: var(--green); }
+    .verdict.unsafe { border-color: var(--red);   color: var(--red); }
+    .verdict-icon   { font-size: 22px; }
+
+    /* ── Worker list ── */
+    .worker-item {
+      display: flex; align-items: flex-start; gap: 10px;
+      padding: 10px 12px;
+      background: var(--surface2);
+      border-radius: 8px;
+      margin-bottom: 8px;
+      border-left: 3px solid var(--border);
+    }
+    .worker-item.ok     { border-left-color: var(--green); }
+    .worker-item.viol   { border-left-color: var(--red); }
+    .worker-badge {
+      min-width: 32px; height: 32px;
+      border-radius: 50%;
+      background: var(--border);
+      display: grid; place-items: center;
+      font-weight: 700; font-size: 13px;
+    }
+    .worker-item.ok   .worker-badge { background: rgba(34,197,94,.2); color: var(--green); }
+    .worker-item.viol .worker-badge { background: rgba(239,68,68,.2);  color: var(--red); }
+    .worker-violations { font-size: 12px; color: var(--red); margin-top: 4px; }
+    .worker-score { font-size: 12px; color: var(--muted); }
+
+    /* ── Violation log ── */
+    .log-entry {
+      padding: 10px 12px;
+      border-left: 3px solid var(--red);
+      background: rgba(239,68,68,.06);
+      border-radius: 0 6px 6px 0;
+      margin-bottom: 8px;
+      font-size: 12px;
+    }
+    .log-time { color: var(--muted); font-size: 11px; margin-bottom: 4px; }
+    .log-detail { color: var(--text); }
+    .empty-state { text-align: center; color: var(--muted); padding: 30px; font-size: 13px; }
+
+    /* ── Buttons ── */
+    .btn {
+      display: inline-flex; align-items: center; gap: 6px;
+      padding: 8px 16px;
+      border-radius: 6px;
+      font-size: 13px; font-weight: 500;
+      cursor: pointer; border: none;
+      transition: opacity .15s;
+    }
+    .btn:hover { opacity: .85; }
+    .btn-primary { background: var(--blue);  color: #fff; }
+    .btn-danger  { background: var(--red);   color: #fff; }
+    .btn-success { background: var(--green); color: #fff; }
+    .btn-ghost   {
+      background: transparent;
+      color: var(--muted);
+      border: 1px solid var(--border);
+    }
+
+    /* ── Confidence bar ── */
+    .conf-bar-wrap { margin-top: 6px; }
+    .conf-bar-bg {
+      height: 5px; background: var(--border);
+      border-radius: 3px; overflow: hidden;
+    }
+    .conf-bar-fill {
+      height: 100%; border-radius: 3px;
+      background: var(--green);
+      transition: width .4s ease;
+    }
+    .conf-bar-fill.low { background: var(--red); }
+
+    .row { display: flex; gap: 10px; align-items: center; margin-bottom: 10px; }
+    .spacer { flex: 1; }
+    small { color: var(--muted); font-size: 11px; }
+  </style>
+</head>
+<body>
+
+<header>
+  <div class="logo">🦺</div>
+  <div>
+    <h1>Construction Safety Monitor</h1>
+    <p>Real-time PPE detection &amp; violation flagging</p>
+  </div>
+  <div class="status-pill">
+    <div class="dot" id="server-dot"></div>
+    <span id="server-status">Connecting…</span>
+  </div>
+</header>
+
+<div class="layout">
+
+  <!-- Left: camera + upload -->
+  <div>
+    <div class="card">
+      <div class="tabs">
+        <button class="tab active" onclick="switchTab('live')">📷 Live Camera</button>
+        <button class="tab" onclick="switchTab('upload')">🖼 Upload Image</button>
+      </div>
+
+      <!-- Live stream tab -->
+      <div id="tab-live" class="tab-content active">
+        <div class="stream-wrap">
+          <img id="stream-img" alt="Live feed" />
+          <div class="stream-placeholder" id="stream-placeholder">
+            <div class="big">📷</div>
+            <div>Camera feed not started</div>
+            <small>Click "Start Camera" to begin live monitoring</small>
+          </div>
+        </div>
+        <div class="card-body row">
+          <button class="btn btn-success" onclick="startStream()">▶ Start Camera</button>
+          <button class="btn btn-ghost" onclick="stopStream()">■ Stop</button>
+          <div class="spacer"></div>
+          <small id="fps-label"></small>
+        </div>
+      </div>
+
+      <!-- Upload tab -->
+      <div id="tab-upload" class="tab-content">
+        <div class="card-body">
+          <div class="upload-area" onclick="document.getElementById('upload-input').click()"
+               ondrop="handleDrop(event)" ondragover="event.preventDefault()">
+            <div class="big">📂</div>
+            <div style="font-weight:600; margin-bottom:6px">Drop an image here</div>
+            <small>or click to browse — JPEG or PNG</small>
+          </div>
+          <input type="file" id="upload-input" accept="image/*" onchange="handleUpload(event)" />
+          <img id="result-img" class="result-img" alt="Annotated result" />
+          <div id="upload-status" style="margin-top:10px; color:var(--muted); font-size:12px;"></div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Right: stats + verdict + log -->
+  <div style="display:flex; flex-direction:column; gap:16px;">
+
+    <!-- Stats -->
+    <div class="stats-row">
+      <div class="stat-card">
+        <div class="stat-value green" id="stat-safe">—</div>
+        <div class="stat-label">Safe scenes</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-value red" id="stat-violations">—</div>
+        <div class="stat-label">Violations</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-value amber" id="stat-workers">—</div>
+        <div class="stat-label">Workers seen</div>
+      </div>
+    </div>
+
+    <!-- Current verdict -->
+    <div class="card">
+      <div class="card-header"><span class="icon">🔍</span> Current Analysis</div>
+      <div class="card-body">
+        <div id="verdict-box" class="verdict">
+          <span class="verdict-icon">⏳</span>
+          <span>Waiting for input…</span>
+        </div>
+        <div id="conf-bar-wrap" class="conf-bar-wrap" style="display:none">
+          <div style="display:flex; justify-content:space-between; margin-bottom:4px;">
+            <small>Scene confidence</small>
+            <small id="conf-label">—</small>
+          </div>
+          <div class="conf-bar-bg">
+            <div class="conf-bar-fill" id="conf-fill" style="width:0%"></div>
+          </div>
+        </div>
+        <div id="worker-list" style="margin-top:14px;"></div>
+      </div>
+    </div>
+
+    <!-- Violation log -->
+    <div class="card" style="flex:1;">
+      <div class="card-header">
+        <span class="icon">📋</span> Recent Violations
+        <div class="spacer"></div>
+        <button class="btn btn-ghost" style="padding:4px 10px; font-size:11px;"
+                onclick="clearLog()">Clear</button>
+        <button class="btn btn-ghost" style="padding:4px 10px; font-size:11px;"
+                onclick="refreshLog()">↻</button>
+      </div>
+      <div class="card-body" style="max-height:340px; overflow-y:auto;">
+        <div id="log-list">
+          <div class="empty-state">No violations logged yet</div>
+        </div>
+      </div>
+    </div>
+
+  </div>
+</div>
+
+<script>
+const API = '';   // empty = same origin; set to 'http://localhost:8000' if running separately
+
+let streamActive  = false;
+let statsInterval = null;
+let logInterval   = null;
+let safeCount = 0, violCount = 0, workerCount = 0;
+
+// ── Server health check ─────────────────────────────────────────────────────
+async function checkHealth() {
+  try {
+    const r = await fetch(`${API}/health`);
+    const d = await r.json();
+    document.getElementById('server-dot').className    = 'dot online';
+    document.getElementById('server-status').textContent =
+      d.model_loaded ? `Online · GPU: ${d.gpu_name !== 'none' ? '✓' : '✗'}` : 'Online · No model';
+  } catch {
+    document.getElementById('server-dot').className    = 'dot';
+    document.getElementById('server-status').textContent = 'Server offline';
+  }
+}
+
+// ── Tab switching ───────────────────────────────────────────────────────────
+function switchTab(name) {
+  document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+  document.querySelectorAll('.tab-content').forEach(c => c.classList.remove('active'));
+  event.target.classList.add('active');
+  document.getElementById(`tab-${name}`).classList.add('active');
+  if (name !== 'live') stopStream();
+}
+
+// ── Live stream ─────────────────────────────────────────────────────────────
+function startStream() {
+  const img = document.getElementById('stream-img');
+  const ph  = document.getElementById('stream-placeholder');
+  img.src = `${API}/stream?t=${Date.now()}`;
+  img.style.display = 'block';
+  ph.style.display  = 'none';
+  streamActive      = true;
+
+  // Poll /violations/recent every 3s to update the sidebar
+  logInterval = setInterval(refreshLog, 3000);
+}
+
+function stopStream() {
+  const img = document.getElementById('stream-img');
+  const ph  = document.getElementById('stream-placeholder');
+  img.src   = '';
+  img.style.display = 'none';
+  ph.style.display  = 'flex';
+  streamActive = false;
+  clearInterval(logInterval);
+}
+
+// ── Image upload ─────────────────────────────────────────────────────────────
+async function handleUpload(event) {
+  const file = event.target.files[0];
+  if (file) await analyseFile(file);
+}
+
+function handleDrop(event) {
+  event.preventDefault();
+  const file = event.dataTransfer.files[0];
+  if (file) analyseFile(file);
+}
+
+async function analyseFile(file) {
+  const status = document.getElementById('upload-status');
+  const img    = document.getElementById('result-img');
+  status.textContent = '⏳ Analysing…';
+  img.style.display  = 'none';
+
+  const form = new FormData();
+  form.append('file', file);
+
+  try {
+    const r = await fetch(`${API}/analyse/preview`, { method: 'POST', body: form });
+    if (!r.ok) { status.textContent = `Error: ${r.status} ${r.statusText}`; return; }
+
+    const d = await r.json();
+
+    // Show annotated image
+    img.src           = d.annotated_image;
+    img.style.display = 'block';
+
+    status.textContent = '';
+    renderVerdict({
+      severity:         d.severity,
+      scene_confidence: d.scene_confidence,
+      worker_count:     d.worker_count,
+      violation_count:  d.violation_count,
+      workers:          [],
+    });
+
+    // Update counters
+    if (d.severity === 'SAFE') safeCount++;
+    else violCount++;
+    workerCount += d.worker_count || 0;
+    updateStats();
+
+  } catch (e) {
+    status.textContent = `Failed to reach API: ${e.message}`;
+  }
+}
+
+// ── Verdict rendering ────────────────────────────────────────────────────────
+function renderVerdict(data) {
+  const box  = document.getElementById('verdict-box');
+  const conf = data.scene_confidence ?? 0;
+
+  box.className = `verdict ${data.severity === 'SAFE' ? 'safe' : 'unsafe'}`;
+  box.innerHTML = data.severity === 'SAFE'
+    ? `<span class="verdict-icon">✅</span>
+       <span>SAFE — ${data.worker_count} worker(s) compliant</span>`
+    : `<span class="verdict-icon">🚨</span>
+       <span>UNSAFE — ${data.violation_count} violation(s) detected</span>`;
+
+  // Confidence bar
+  const wrap = document.getElementById('conf-bar-wrap');
+  wrap.style.display = 'block';
+  document.getElementById('conf-label').textContent = `${(conf * 100).toFixed(0)}%`;
+  const fill = document.getElementById('conf-fill');
+  fill.style.width = `${conf * 100}%`;
+  fill.className   = `conf-bar-fill ${conf < 0.5 ? 'low' : ''}`;
+
+  // Worker list
+  const list = document.getElementById('worker-list');
+  list.innerHTML = '';
+  if (data.workers && data.workers.length) {
+    data.workers.forEach(w => {
+      const cls = w.is_compliant ? 'ok' : 'viol';
+      const div = document.createElement('div');
+      div.className = `worker-item ${cls}`;
+      div.innerHTML = `
+        <div class="worker-badge">${w.worker_index}</div>
+        <div>
+          <div style="font-weight:600; font-size:13px;">
+            Worker ${w.worker_index} — ${w.is_compliant ? 'Compliant' : 'Violation'}
+          </div>
+          ${w.is_compliant
+            ? `<div class="worker-score">Confidence: ${(w.compliance_score*100).toFixed(0)}%</div>`
+            : `<div class="worker-violations">${w.violations.map(v => `⚠ ${v}`).join('<br>')}</div>`
+          }
+        </div>`;
+      list.appendChild(div);
+    });
+  }
+}
+
+// ── Stats ────────────────────────────────────────────────────────────────────
+function updateStats() {
+  document.getElementById('stat-safe').textContent       = safeCount;
+  document.getElementById('stat-violations').textContent = violCount;
+  document.getElementById('stat-workers').textContent    = workerCount;
+}
+
+// ── Violation log ────────────────────────────────────────────────────────────
+async function refreshLog() {
+  try {
+    const r = await fetch(`${API}/violations/recent?limit=30`);
+    const d = await r.json();
+    const list = document.getElementById('log-list');
+
+    if (!d.events || d.events.length === 0) {
+      list.innerHTML = '<div class="empty-state">No violations logged yet</div>';
+      return;
+    }
+
+    list.innerHTML = d.events.map(e => {
+      const t = new Date(e.timestamp).toLocaleTimeString();
+      const details = e.details.slice(0, 3).join(', ');
+      return `<div class="log-entry">
+        <div class="log-time">${t} — ${e.worker_count} worker(s)</div>
+        <div class="log-detail">${e.violation_count} violation(s): ${details}</div>
+      </div>`;
+    }).join('');
+
+    // Update counts from log
+    violCount  = d.total_logged;
+    updateStats();
+  } catch { /* ignore if server not available */ }
+}
+
+async function clearLog() {
+  await fetch(`${API}/violations/clear`, { method: 'DELETE' });
+  safeCount = violCount = workerCount = 0;
+  updateStats();
+  document.getElementById('log-list').innerHTML =
+    '<div class="empty-state">Log cleared</div>';
+}
+
+// ── Init ─────────────────────────────────────────────────────────────────────
+checkHealth();
+setInterval(checkHealth, 10000);
+</script>
+</body>
+</html>

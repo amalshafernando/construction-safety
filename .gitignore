@@ -13,6 +13,7 @@ __pycache__/
 .env
 venv/
 .venv/
+resource.txt
 
 # Output images and reports
 outputs/annotated/
